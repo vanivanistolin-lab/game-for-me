@@ -1,0 +1,108 @@
+name: Build Windows and Android
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GODOT_VERSION: 4.6.3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      - name: Install verified Godot and matching templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          mkdir -p /tmp/godot-download
+          cd /tmp/godot-download
+          curl -fL --retry 3 "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -o editor.zip
+          curl -fL --retry 3 "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -o templates.tpz
+          curl -fL --retry 3 "$base/SHA512-SUMS.txt" -o SHA512-SUMS.txt
+          mv editor.zip "Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          mv templates.tpz "Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          grep -E "Godot_v${GODOT_VERSION//./\.}-stable_(linux.x86_64.zip|export_templates.tpz)$" SHA512-SUMS.txt > selected.sha512
+          test "$(wc -l < selected.sha512)" -eq 2
+          sha512sum -c selected.sha512
+          unzip -q "Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          sudo install -m755 "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
+          unzip -q "Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mv templates/* "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/"
+      - name: Import and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot --headless --editor --import --quit 2>&1 | tee /tmp/import.log
+          ! grep -E 'SCRIPT ERROR|Parse Error' /tmp/import.log
+          godot --headless --fixed-fps 60 --script res://tests/smoke.gd 2>&1 | tee /tmp/smoke.log
+          ! grep -E 'SCRIPT ERROR|ERROR:' /tmp/smoke.log
+      - name: Configure Android debug signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android" "$HOME/.config/godot"
+          test ! -e "$HOME/.android/debug.keystore" || rm "$HOME/.android/debug.keystore"
+          keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/debug_keystore = "$HOME/.android/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+      - name: Export and validate packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/windows
+          godot --headless --export-release Windows build/windows/GameForMe.exe
+          godot --headless --export-debug Android build/GameForMe-Android.apk
+          test "$(stat -c%s build/windows/GameForMe.exe)" -gt 1000000
+          test "$(stat -c%s build/GameForMe-Android.apk)" -gt 1000000
+          file build/windows/GameForMe.exe | grep 'PE32+'
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify build/GameForMe-Android.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging build/GameForMe-Android.apk | grep org.gameforme.rubezh
+          cp README.md build/windows/README.md
+          (cd build/windows && zip -r ../GameForMe-Windows.zip .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameForMe-Windows
+          path: build/GameForMe-Windows.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameForMe-Android
+          path: build/GameForMe-Android.apk
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packages/GameForMe-Windows.zip
+            packages/GameForMe-Android.apk

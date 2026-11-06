@@ -76,8 +76,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build/windows
-          godot --headless --export-release Windows build/windows/GameForMe.exe
-          godot --headless --export-debug Android build/GameForMe-Android.apk
+          python3 scripts/ci_export.py Windows build/windows/GameForMe.exe --export-release
+          python3 scripts/ci_export.py Android build/GameForMe-Android.apk --export-debug
           test "$(stat -c%s build/windows/GameForMe.exe)" -gt 1000000
           test "$(stat -c%s build/GameForMe-Android.apk)" -gt 1000000
           file build/windows/GameForMe.exe | grep 'PE32+'
@@ -89,6 +89,11 @@ jobs:
         with:
           name: GameForMe-Windows
           path: build/GameForMe-Windows.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameForMe-Windows-EXE
+          path: build/windows/GameForMe.exe
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -114,4 +119,5 @@ jobs:
           prerelease: true
           files: |
             packages/GameForMe-Windows.zip
+            packages/GameForMe.exe
             packages/GameForMe-Android.apk

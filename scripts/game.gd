@@ -1,5 +1,7 @@
 extends Node3D
 
+const Visuals = preload("res://scripts/visuals.gd")
+const TrainingOverlay = preload("res://scripts/training_overlay.gd")
 const Actor = preload("res://scripts/actor.gd")
 const WEAPONS = [
  {"name":"Вектор • пистолет", "damage":25.0,"rate":0.24,"mag":12,"reload":1.3,"spread":0.012},
@@ -34,19 +36,52 @@ var navigation: AStarGrid2D
 var touch_layer: Control
 var match_mode=0
 var match_team=0
+var graphics=1
+var material_cache={}
+var surface_cache={}
+var training={"invincible":false,"infinite_ammo":false,"reveal_bots":false,"no_recoil":false}
+var training_panel: PanelContainer
+var practice_used=false
+var status_top: Label
+var interface_theme: Theme
+var crosshair: Label
 
 func _ready():
  rng.randomize()
  load_settings()
  setup_inputs()
+ interface_theme=create_theme()
  ui = CanvasLayer.new()
  add_child(ui)
- hud = label_at(Vector2(24,20),24)
+ hud = label_at(Vector2(26,580),20)
+ var backing=StyleBoxFlat.new()
+ backing.bg_color=Color(0.025,0.055,0.075,0.85)
+ backing.content_margin_left=18
+ backing.content_margin_right=18
+ backing.content_margin_top=10
+ backing.content_margin_bottom=10
+ backing.border_width_left=3
+ backing.border_color=Color("d4ad67")
+ hud.add_theme_stylebox_override("normal",backing)
+ status_top=label_at(Vector2(440,20),24)
  board = label_at(Vector2(430,140),22)
  board.visible = false
- notice = label_at(Vector2(420,70),24)
- var cross = label_at(Vector2(631,340),26)
- cross.text = "+"
+ notice = label_at(Vector2(420,105),21)
+ crosshair=label_at(Vector2(631,340),26)
+ crosshair.text="+"
+ crosshair.visible=false
+ var overlay=TrainingOverlay.new()
+ overlay.game=self
+ ui.add_child(overlay)
+ world=Node3D.new()
+ add_child(world)
+ build_map()
+ var preview=Camera3D.new()
+ world.add_child(preview)
+ preview.position=Vector3(16,12,26)
+ preview.look_at(Vector3(0,2,0))
+ preview.current=true
+ hud.visible=false
  show_menu()
 
 func setup_inputs():
@@ -92,15 +127,20 @@ func show_menu():
  Input.mouse_mode=Input.MOUSE_MODE_VISIBLE
  if is_instance_valid(menu): menu.queue_free()
  menu=PanelContainer.new()
- menu.position=Vector2(440,90)
- menu.custom_minimum_size=Vector2(400,520)
+ menu.theme=interface_theme
+ menu.position=Vector2(55,35)
+ menu.custom_minimum_size=Vector2(420,650)
  ui.add_child(menu)
+ var scroll=ScrollContainer.new()
+ scroll.custom_minimum_size=Vector2(420,610)
+ menu.add_child(scroll)
  var b=VBoxContainer.new()
- b.add_theme_constant_override("separation",9)
- menu.add_child(b)
+ b.custom_minimum_size.x=365
+ b.add_theme_constant_override("separation",8)
+ scroll.add_child(b)
  var title=Label.new()
- title.text="РУБЕЖ / GAME FOR ME"
- title.add_theme_font_size_override("font_size",28)
+ title.text="РУБЕЖ / 02"
+ title.add_theme_font_size_override("font_size",34)
  b.add_child(title)
  var maps=option(b,"Карта",["Портовый квартал","Цех 17","Песчаный форт"],func(i): map_id=i)
  maps.selected=map_id
@@ -109,6 +149,7 @@ func show_menu():
  var teams=option(b,"Команда",["Дозор","Искра"],func(i): team=i)
  teams.selected=team
  option(b,"Боты",["Новичок","Боец","Ветеран"],func(i): difficulty=i).selected=difficulty
+ option(b,"Графика",["Низкое • без теней","Стандарт • тени","Высокое • сглаживание"],func(i): graphics=i; apply_quality()).selected=graphics
  slider(b,"Чувствительность",0.001,0.006,sensitivity,func(v): sensitivity=v)
  slider(b,"Звук",0,1,volume,func(v): volume=v)
  slider(b,"Размер сенсорных кнопок",0.7,1.4,button_scale,func(v): button_scale=v)
@@ -122,6 +163,12 @@ func show_menu():
    get_tree().paused=false
    Input.mouse_mode=Input.MOUSE_MODE_CAPTURED)
  b.add_child(play)
+ var trainer=Button.new()
+ trainer.text="Офлайн-тренировка / F6"
+ trainer.pressed.connect(show_training)
+ b.add_child(trainer)
+ b.move_child(play,1)
+ b.move_child(trainer,2)
  if active:
   var restart=Button.new()
   restart.text="Новый матч с выбранными параметрами"
@@ -130,16 +177,43 @@ func show_menu():
  menu.process_mode=Node.PROCESS_MODE_ALWAYS
 
 func material(color: Color, metal: float=0.0) -> StandardMaterial3D:
+ var key=color.to_html()+str(metal)
+ if material_cache.has(key): return material_cache[key]
  var m=StandardMaterial3D.new()
  m.albedo_color=color
- m.roughness=0.8
+ m.roughness=0.78 if metal==0 else 0.36
  m.metallic=metal
+ material_cache[key]=m
  return m
+
+func surface_material(color: Color, texture: String) -> StandardMaterial3D:
+ var key=color.to_html()+texture
+ if surface_cache.has(key): return surface_cache[key]
+ var m=material(color).duplicate()
+ m.albedo_texture=load("res://assets/textures/"+texture+".png")
+ m.uv1_triplanar=true
+ m.uv1_world_triplanar=true
+ m.uv1_scale=Vector3.ONE*0.45
+ m.texture_filter=BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+ surface_cache[key]=m
+ return m
+
+func apply_quality():
+ get_viewport().msaa_3d=Viewport.MSAA_2X if graphics==2 else Viewport.MSAA_DISABLED
+ get_viewport().scaling_3d_scale=0.75 if graphics==0 else 1.0
+ if is_instance_valid(world):
+  for item in get_tree().get_nodes_in_group("visual_detail"):
+   if world.is_ancestor_of(item): item.visible=graphics>0
+  for node in world.get_children():
+   if node is DirectionalLight3D: node.shadow_enabled=graphics>0
+   if node is WorldEnvironment: node.environment.fog_enabled=graphics>0
+
 
 func block(pos: Vector3, size: Vector3, color: Color, collision: bool=true, parent: Node=null):
  var body=StaticBody3D.new() if collision else Node3D.new()
  (world if parent==null else parent).add_child(body)
  body.position=pos
+ if not collision and parent==null: body.add_to_group("visual_detail")
  var mesh=MeshInstance3D.new()
  var shape=BoxMesh.new()
  shape.size=size
@@ -166,6 +240,9 @@ func start_match():
  actors.clear()
  world=Node3D.new()
  add_child(world)
+ hud.visible=true
+ crosshair.visible=true
+ practice_used=training.values().has(true)
  scores=[0,0]
  kills=0
  deaths=0
@@ -191,52 +268,7 @@ func start_match():
  if OS.has_feature("android"): touch_controls()
 
 func build_map():
- navigation=AStarGrid2D.new()
- navigation.region=Rect2i(-29,-29,59,59)
- navigation.cell_size=Vector2.ONE
- navigation.diagonal_mode=AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
- navigation.update()
- var palettes=[Color("879caa"),Color("62767a"),Color("c9a66b")]
- var base=palettes[map_id]
- var env=WorldEnvironment.new()
- env.environment=Environment.new()
- env.environment.background_mode=Environment.BG_COLOR
- env.environment.background_color=Color("9bb8ca")
- env.environment.ambient_light_source=Environment.AMBIENT_SOURCE_COLOR
- env.environment.ambient_light_color=Color("c9d7e5")
- env.environment.ambient_light_energy=0.65
- world.add_child(env)
- var sun=DirectionalLight3D.new()
- sun.rotation_degrees=Vector3(-50,-35,0)
- sun.light_color=Color("ffe1b0")
- sun.light_energy=1.3
- sun.shadow_enabled=true
- world.add_child(sun)
- block(Vector3(0,-0.5,0),Vector3(60,1,60),base.darkened(0.35))
- for x in [-30,30]: block(Vector3(x,3,0),Vector3(1,6,60),base)
- for z in [-30,30]: block(Vector3(0,3,z),Vector3(60,6,1),base)
- for x in [-19,0,19]:
-  for z in [-14,14]:
-   block(Vector3(x,3,z),Vector3(9,6,8),base)
-   block(Vector3(x,6.15,z),Vector3(9.5,0.3,8.5),base.darkened(0.5))
-   for w in [-2,2]:
-    block(Vector3(x+w,3.5,z-4.03),Vector3(1.3,1.5,0.1),Color("28485b"),false)
-   block(Vector3(x,0.1,z-4.7),Vector3(10,0.2,1),base.lightened(0.15))
- for x in [-23,-10,10,23]:
-  for z in [-5,5]:
-   block(Vector3(x,0.9,z),Vector3(3,1.8,3),base.darkened(0.2))
-   block(Vector3(x,1.85,z),Vector3(3.15,0.12,3.15),Color("b2a17d"),false)
- for i in range(8):
-  block(Vector3(-5+i*1.2,0.15*i,22),Vector3(1.2,0.3*(i+1),4),base)
- for z in [-24,24]:
-  for x in [-25,-12,12,25]:
-   block(Vector3(x,2.5,z),Vector3(0.16,5,0.16),Color("34424a"))
-   block(Vector3(x,5,z),Vector3(1.2,0.2,0.5),Color("ffdda0"),false)
- if map_id==1:
-  for x in [-26,26]:
-   block(Vector3(x,3,0),Vector3(2,6,7),Color("d68b33"))
- if map_id==2:
-  for x in [-27,27]: block(Vector3(x,4,20),Vector3(4,8,4),base)
+ Visuals.build(self)
 
 func spawn_position(t: int) -> Vector3:
  for attempt in range(100):
@@ -256,6 +288,7 @@ func save_settings():
  c.set_value("controls","sensitivity",sensitivity)
  c.set_value("controls","button_scale",button_scale)
  c.set_value("audio","volume",volume)
+ c.set_value("graphics","quality",graphics)
  c.save("user://settings.cfg")
 
 func load_settings():
@@ -264,12 +297,16 @@ func load_settings():
   sensitivity=c.get_value("controls","sensitivity",0.0025)
   button_scale=c.get_value("controls","button_scale",1.0)
   volume=c.get_value("audio","volume",0.25)
+  graphics=clampi(int(c.get_value("graphics","quality",1)),0,2)
 
 func _process(delta):
  if not active: return
  elapsed+=delta
  remaining-=delta
- hud.text="ДОЗОР %d  :  %d ИСКРА     %02d:%02d\nЗдоровье %d   Броня %d   ₽%d\n%s   %d / %d\nR перезарядка • B магазин • G граната • Tab счёт" % [scores[0],scores[1],int(remaining)/60,int(remaining)%60,maxi(0,int(player.hp)),int(player.armor),money,WEAPONS[player.weapon].name,player.ammo,player.reserve]
+ status_top.text="ДОЗОР  %02d    /    %02d  ИСКРА     %02d:%02d"%[scores[0],scores[1],int(remaining)/60,int(remaining)%60]
+ hud.text="ЗДОРОВЬЕ %03d   БРОНЯ %02d   ₽%d\n%s    %02d / %03d\nR перезарядка · B магазин · G граната · F6 тренировка"%[maxi(0,int(player.hp)),int(player.armor),money,WEAPONS[player.weapon].name,player.ammo,player.reserve]
+ if practice_used: status_top.text+="\nОФЛАЙН-ТРЕНИРОВКА"
+
  board.visible=Input.is_action_pressed("score")
  if board.visible:
   board.text="ИГРОК          УБИЙСТВА / СМЕРТИ\n"
@@ -278,6 +315,9 @@ func _process(delta):
  if elapsed>12 and notice.text.begins_with("Магазин"): notice.text=""
 
 func _unhandled_input(e):
+ if e is InputEventKey and e.pressed and e.keycode==KEY_F6:
+  show_training()
+  return
  if e is InputEventKey and e.pressed and e.keycode==KEY_ESCAPE and active:
   get_tree().paused=true
   show_menu()
@@ -315,12 +355,14 @@ func shop():
 
 func finish_match():
  active=false
+ crosshair.visible=false
  notice.text="Матч завершён! "+("Ничья" if scores[0]==scores[1] else ("Победа Дозора" if scores[0]>scores[1] else "Победа Искры"))
  if match_mode==1:
   var winner=actors[0]
   for a in actors:
    if a.frags>winner.frags: winner=a
   notice.text="Матч завершён! Победитель: "+("Вы" if winner.human else "Бот")+" • %d убийств"%winner.frags
+ if practice_used: notice.text="ТРЕНИРОВКА · "+notice.text
  show_menu()
 
 func died(victim, killer):
@@ -382,3 +424,67 @@ func touch_controls():
  pause.position=Vector2(1120,15)
  touch_layer.add_child(pause)
  pause.pressed.connect(func(): get_tree().paused=true; show_menu())
+
+func show_training():
+ if is_instance_valid(training_panel): return
+ var was_paused=get_tree().paused
+ get_tree().paused=true
+ Input.mouse_mode=Input.MOUSE_MODE_VISIBLE
+ training_panel=PanelContainer.new()
+ training_panel.theme=interface_theme
+ training_panel.position=Vector2(500,135)
+ training_panel.custom_minimum_size=Vector2(430,330)
+ training_panel.process_mode=Node.PROCESS_MODE_ALWAYS
+ ui.add_child(training_panel)
+ var box=VBoxContainer.new()
+ training_panel.add_child(box)
+ var title=Label.new()
+ title.text="ОФЛАЙН-ТРЕНИРОВКА\nВстроенные настройки игры против ботов"
+ box.add_child(title)
+ var names={"invincible":"Бессмертие","infinite_ammo":"Бесконечные патроны и гранаты","reveal_bots":"Показывать ботов за стенами","no_recoil":"Без отдачи и разброса"}
+ for key in names:
+  var check=CheckButton.new()
+  check.text=names[key]
+  check.button_pressed=training[key]
+  check.toggled.connect(func(v): training[key]=v; practice_used=practice_used or v)
+  box.add_child(check)
+ var close=Button.new()
+ close.text="Готово"
+ close.pressed.connect(func():
+  training_panel.queue_free()
+  get_tree().paused=was_paused
+  if active and not was_paused and not is_instance_valid(menu): Input.mouse_mode=Input.MOUSE_MODE_CAPTURED)
+ box.add_child(close)
+
+func create_theme() -> Theme:
+ var t=Theme.new()
+ t.default_font_size=17
+ var panel=StyleBoxFlat.new()
+ panel.bg_color=Color("13232f")
+ panel.content_margin_left=20
+ panel.content_margin_right=20
+ panel.content_margin_top=18
+ panel.content_margin_bottom=18
+ panel.border_width_top=3
+ panel.border_color=Color("d2ad68")
+ panel.corner_radius_bottom_left=8
+ panel.corner_radius_bottom_right=8
+ t.set_stylebox("panel","PanelContainer",panel)
+ for type in ["Button","OptionButton"]:
+  for state in ["normal","hover","pressed","focus"]:
+   var box=StyleBoxFlat.new()
+   box.bg_color=Color("263e4e") if state=="normal" else Color("416071")
+   box.content_margin_left=12
+   box.content_margin_right=12
+   box.content_margin_top=8
+   box.content_margin_bottom=8
+   box.corner_radius_top_left=4
+   box.corner_radius_top_right=4
+   box.corner_radius_bottom_left=4
+   box.corner_radius_bottom_right=4
+   if state=="focus":
+    box.border_width_bottom=2
+    box.border_color=Color("d2ad68")
+   t.set_stylebox(state,type,box)
+  t.set_color("font_color",type,Color("e7edf0"))
+ return t

@@ -86,6 +86,25 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging build/GameForMe-Android.apk | grep org.gameforme.rubezh
           cp README.md build/windows/README.md
           (cd build/windows && zip -r ../GameForMe-Windows.zip .)
+      - name: Build Windows installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y nsis
+          makensis -NOCD scripts/windows_installer.nsi
+          test "$(stat -c%s build/GameForMe-Setup.exe)" -gt 1000000
+          file build/GameForMe-Setup.exe | grep 'PE32'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameForMe-Installer
+          path: build/GameForMe-Setup.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameForMe-Training-Guide
+          path: docs/Training-Guide.txt
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: GameForMe-Windows
@@ -121,4 +140,6 @@ jobs:
           files: |
             packages/GameForMe-Windows.zip
             packages/GameForMe.exe
+            packages/GameForMe-Setup.exe
+            packages/Training-Guide.txt
             packages/GameForMe-Android.apk

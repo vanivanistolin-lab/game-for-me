@@ -48,28 +48,11 @@ func _ready():
   add_child(camera)
   camera.current=true
   gun=Node3D.new()
+  gun.position=Vector3(0.015,-0.06,-0.18)
   camera.add_child(gun)
-  game.block(Vector3(0.26,-0.23,-0.55),Vector3(0.15,0.17,0.65),Color("29363d"),false,gun)
-  game.block(Vector3(0.26,-0.33,-0.4),Vector3(0.1,0.23,0.14),Color("58606a"),false,gun)
-  game.block(Vector3(0.26,-0.2,-0.96),Vector3(0.07,0.07,0.25),Color("141e25"),false,gun)
+  game.Visuals.weapon(game,gun,weapon)
  else:
-  var m=MeshInstance3D.new()
-  var mesh=CapsuleMesh.new()
-  mesh.radius=0.32
-  mesh.height=1.2
-  m.mesh=mesh
-  m.position.y=0.8
-  m.material_override=game.material(Color("3584bb") if team==0 else Color("d47245"))
-  add_child(m)
-  var head=MeshInstance3D.new()
-  var sphere=SphereMesh.new()
-  sphere.radius=0.24
-  sphere.height=0.48
-  head.mesh=sphere
-  head.position.y=1.55
-  head.material_override=game.material(Color("c7ac88"))
-  add_child(head)
-  game.block(Vector3(0.3,1,-0.35),Vector3(0.12,0.15,0.7),Color("202c32"),false,self)
+  game.Visuals.soldier(game,self,team)
 
 func respawn():
  position=game.spawn_position(team)
@@ -87,6 +70,7 @@ func equip(i: int):
  weapon=i
  ammo=mini(ammo,int(game.WEAPONS[i].mag))
  reload_time=0
+ if human and is_instance_valid(gun): game.Visuals.weapon(game,gun,weapon)
 
 func _unhandled_input(e):
  if not human or not game.active or hp<=0: return
@@ -157,7 +141,7 @@ func _physics_process(dt):
   if Input.is_action_just_pressed("knife"): knife()
   if (Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and Input.mouse_mode==Input.MOUSE_MODE_CAPTURED) or touch_fire: shoot()
   gun.rotation.z=sin(game.elapsed*9)*0.015*direction.length()/5
-  gun.position.z=lerpf(gun.position.z,0.12 if cooldown>game.WEAPONS[weapon].rate*0.7 else 0.0,dt*18)
+  gun.position.z=lerpf(gun.position.z,-0.06 if cooldown>game.WEAPONS[weapon].rate*0.7 else -0.18,dt*18)
   gun.rotation.x=-0.35 if reload_time>0 else 0.0
  else:
   thinking-=dt
@@ -210,8 +194,10 @@ func reload_weapon():
  if reload_time<=0 and ammo<game.WEAPONS[weapon].mag and reserve>0: reload_time=game.WEAPONS[weapon].reload
 
 func shoot():
+ if human and game.training.infinite_ammo and ammo<=0: ammo=game.WEAPONS[weapon].mag
+ if human and game.training.no_recoil: recoil=0
  if cooldown>0 or reload_time>0 or ammo<=0: return
- ammo-=1
+ if not (human and game.training.infinite_ammo): ammo-=1
  var w=game.WEAPONS[weapon]
  cooldown=w.rate*(1 if human else 2.5-game.difficulty*0.6)
  var origin=global_position+Vector3.UP*1.45
@@ -219,13 +205,14 @@ func shoot():
  if human:
   origin=camera.global_position
   forward=-camera.global_transform.basis.z
-  recoil+=0.012
+  if not game.training.no_recoil: recoil+=0.012
   game.sound()
  elif target!=null:
   forward=(target.global_position+Vector3.UP*1.3-origin).normalized()
  var pellets=7 if weapon==4 else 1
  for i in range(pellets):
   var spread=w.spread*(0.3 if aim else 1.0)*(1.0 if human else 4.0-game.difficulty)
+  if human and game.training.no_recoil: spread=0.0
   var ray=(forward+Vector3(game.rng.randf_range(-spread,spread),game.rng.randf_range(-spread,spread),game.rng.randf_range(-spread,spread))).normalized()
   var q=PhysicsRayQueryParameters3D.create(origin,origin+ray*90,3,[get_rid()])
   var hit=get_world_3d().direct_space_state.intersect_ray(q)
@@ -238,6 +225,7 @@ func shoot():
  game.effect(origin+forward*0.9,Color("ffb133"),0.08)
 
 func damage(amount: float, attacker):
+ if human and game.training.invincible: return
  if hp<=0: return
  var absorbed=minf(armor,amount*0.45)
  armor-=absorbed
@@ -259,8 +247,9 @@ func knife():
    a.damage(65,self)
 
 func grenade():
+ if human and game.training.infinite_ammo and grenades<=0: grenades=1
  if grenades<=0 or hp<=0: return
- grenades-=1
+ if not (human and game.training.infinite_ammo): grenades-=1
  var position_target=global_position-global_transform.basis.z*8
  position_target.y=1
  var q=PhysicsRayQueryParameters3D.create(global_position+Vector3.UP,position_target,1)

@@ -97,12 +97,16 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: packages
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          name: Рубеж — первая версия FPS · v0.1.0
+          body_path: docs/RELEASE-v0.1.0.md
+          prerelease: true
           files: |
             packages/GameForMe-Windows.zip
             packages/GameForMe-Android.apk

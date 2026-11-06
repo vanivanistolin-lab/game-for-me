@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      GODOT_VERSION: 4.6.3
+      GODOT_VERSION: 4.4.1
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -62,7 +62,7 @@ jobs:
           mkdir -p "$HOME/.android" "$HOME/.config/godot"
           test ! -e "$HOME/.android/debug.keystore" || rm "$HOME/.android/debug.keystore"
           keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000
-          cat > "$HOME/.config/godot/editor_settings-4.6.tres" <<EOF
+          cat > "$HOME/.config/godot/editor_settings-${GODOT_VERSION%.*}.tres" <<EOF
           [gd_resource type="EditorSettings" format=3]
           [resource]
           export/android/android_sdk_path = "$ANDROID_HOME"
@@ -115,8 +115,8 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          name: Рубеж — первая версия FPS · v0.1.0
-          body_path: docs/RELEASE-v0.1.0.md
+          name: Рубеж · ${{ github.ref_name }}
+          body_path: docs/RELEASE-${{ github.ref_name }}.md
           prerelease: true
           files: |
             packages/GameForMe-Windows.zip

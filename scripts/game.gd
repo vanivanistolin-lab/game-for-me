@@ -1,5 +1,6 @@
 extends Node3D
 
+const NetworkSession = preload("res://scripts/network_session.gd")
 const Visuals = preload("res://scripts/visuals.gd")
 const TrainingOverlay = preload("res://scripts/training_overlay.gd")
 const Actor = preload("res://scripts/actor.gd")
@@ -45,11 +46,27 @@ var practice_used=false
 var status_top: Label
 var interface_theme: Theme
 var crosshair: Label
+var net: Node
+var dedicated=false
 
 func _ready():
  rng.randomize()
  load_settings()
  setup_inputs()
+ net=NetworkSession.new()
+ net.game=self
+ net.name="Network"
+ add_child(net)
+ dedicated=OS.get_environment("GAME_SERVER")=="1" or OS.get_cmdline_user_args().has("--server")
+ if dedicated:
+  graphics=0
+  var port=int(OS.get_environment("PORT")) if not OS.get_environment("PORT").is_empty() else 10000
+  net.bot_count=clampi(int(OS.get_environment("GAME_BOTS")),0,6) if not OS.get_environment("GAME_BOTS").is_empty() else 2
+  Engine.max_fps=30
+  var result=net.host(port,true)
+  if result!=OK: get_tree().quit(1)
+  else: print("GameForMe server listening on port ",port)
+  return
  interface_theme=create_theme()
  ui = CanvasLayer.new()
  add_child(ui)
@@ -139,7 +156,7 @@ func show_menu():
  b.add_theme_constant_override("separation",8)
  scroll.add_child(b)
  var title=Label.new()
- title.text="РУБЕЖ / 02"
+ title.text="РУБЕЖ / 03"
  title.add_theme_font_size_override("font_size",34)
  b.add_child(title)
  var maps=option(b,"Карта",["Портовый квартал","Цех 17","Песчаный форт"],func(i): map_id=i)
@@ -154,11 +171,11 @@ func show_menu():
  slider(b,"Звук",0,1,volume,func(v): volume=v)
  slider(b,"Размер сенсорных кнопок",0.7,1.4,button_scale,func(v): button_scale=v)
  var play=Button.new()
- play.text="Начать матч" if not active else "Продолжить"
+ play.text="Продолжить" if active or net.online else "Начать матч"
  play.pressed.connect(func():
   save_settings()
   menu.queue_free()
-  if not active: start_match()
+  if not active and not net.online: start_match()
   else:
    get_tree().paused=false
    Input.mouse_mode=Input.MOUSE_MODE_CAPTURED)
@@ -169,7 +186,14 @@ func show_menu():
  b.add_child(trainer)
  b.move_child(play,1)
  b.move_child(trainer,2)
- if active:
+ var network_button=Button.new()
+ network_button.text="Сетевая игра / сервер • F8"
+ network_button.pressed.connect(net.show_panel)
+ b.add_child(network_button)
+ b.move_child(network_button,2)
+ if net.online:
+  trainer.disabled=true
+ if active and not net.online:
   var restart=Button.new()
   restart.text="Новый матч с выбранными параметрами"
   restart.pressed.connect(func(): menu.queue_free(); get_tree().paused=false; start_match())
@@ -191,6 +215,11 @@ func surface_material(color: Color, texture: String) -> StandardMaterial3D:
  if surface_cache.has(key): return surface_cache[key]
  var m=material(color).duplicate()
  m.albedo_texture=load("res://assets/textures/"+texture+".png")
+ m.normal_enabled=graphics>0
+ m.normal_texture=load("res://assets/textures/"+texture+"-normal.png")
+ m.normal_scale=0.65
+ m.roughness_texture=load("res://assets/textures/"+texture+"-roughness.png")
+ m.roughness=1.0
  m.uv1_triplanar=true
  m.uv1_world_triplanar=true
  m.uv1_scale=Vector3.ONE*0.45
@@ -199,6 +228,7 @@ func surface_material(color: Color, texture: String) -> StandardMaterial3D:
  return m
 
 func apply_quality():
+ for material in surface_cache.values(): material.normal_enabled=graphics>0
  get_viewport().msaa_3d=Viewport.MSAA_2X if graphics==2 else Viewport.MSAA_DISABLED
  get_viewport().scaling_3d_scale=0.75 if graphics==0 else 1.0
  if is_instance_valid(world):
@@ -214,12 +244,13 @@ func block(pos: Vector3, size: Vector3, color: Color, collision: bool=true, pare
  (world if parent==null else parent).add_child(body)
  body.position=pos
  if not collision and parent==null: body.add_to_group("visual_detail")
- var mesh=MeshInstance3D.new()
- var shape=BoxMesh.new()
- shape.size=size
- mesh.mesh=shape
- mesh.material_override=material(color)
- body.add_child(mesh)
+ if not dedicated:
+  var mesh=MeshInstance3D.new()
+  var shape=BoxMesh.new()
+  shape.size=size
+  mesh.mesh=shape
+  mesh.material_override=material(color)
+  body.add_child(mesh)
  if collision:
   var c=CollisionShape3D.new()
   var s=BoxShape3D.new()
@@ -240,8 +271,9 @@ func start_match():
  actors.clear()
  world=Node3D.new()
  add_child(world)
- hud.visible=true
- crosshair.visible=true
+ if not dedicated:
+  hud.visible=true
+  crosshair.visible=true
  practice_used=training.values().has(true)
  scores=[0,0]
  kills=0
@@ -252,9 +284,13 @@ func start_match():
  active=true
  match_mode=mode
  match_team=team
- notice.text="Магазин: B • покупка первые 12 секунд"
+ if not dedicated: notice.text="Магазин: B • покупка первые 12 секунд"
  if is_instance_valid(touch_layer): touch_layer.queue_free()
  build_map()
+ if net.online:
+  if net.is_host: net.populate()
+  if not dedicated: Input.mouse_mode=Input.MOUSE_MODE_CAPTURED
+  return
  for i in range(8):
   var a=Actor.new()
   a.game=self
@@ -268,7 +304,8 @@ func start_match():
  if OS.has_feature("android"): touch_controls()
 
 func build_map():
- Visuals.build(self)
+ if dedicated: Visuals.build_collision_map(self)
+ else: Visuals.build(self)
 
 func spawn_position(t: int) -> Vector3:
  for attempt in range(100):
@@ -289,6 +326,9 @@ func save_settings():
  c.set_value("controls","button_scale",button_scale)
  c.set_value("audio","volume",volume)
  c.set_value("graphics","quality",graphics)
+ if is_instance_valid(net):
+  c.set_value("network","address",net.last_address)
+  c.set_value("network","nickname",net.nickname)
  c.save("user://settings.cfg")
 
 func load_settings():
@@ -301,25 +341,36 @@ func load_settings():
 
 func _process(delta):
  if not active: return
- elapsed+=delta
- remaining-=delta
+ if not net.online or net.is_host:
+  elapsed+=delta
+  remaining-=delta
+  if net.online and (remaining<=0 or score_limit_reached()):
+   net.end_round()
+   return
+ if dedicated or not is_instance_valid(player): return
+ if net.online: money=player.cash
  status_top.text="ДОЗОР  %02d    /    %02d  ИСКРА     %02d:%02d"%[scores[0],scores[1],int(remaining)/60,int(remaining)%60]
  hud.text="ЗДОРОВЬЕ %03d   БРОНЯ %02d   ₽%d\n%s    %02d / %03d\nR перезарядка · B магазин · G граната · F6 тренировка"%[maxi(0,int(player.hp)),int(player.armor),money,WEAPONS[player.weapon].name,player.ammo,player.reserve]
+ if net.online: hud.text=hud.text.replace("F6 тренировка","F8 сервер")
+ if net.online: status_top.text+="\nСЕТЬ · "+("АДМИНИСТРАТОР" if net.is_admin() else "ИГРОК")
  if practice_used: status_top.text+="\nОФЛАЙН-ТРЕНИРОВКА"
 
  board.visible=Input.is_action_pressed("score")
  if board.visible:
   board.text="ИГРОК          УБИЙСТВА / СМЕРТИ\n"
-  for i in range(actors.size()): board.text+=("Вы" if i==0 else "Бот %d"%i)+"                %d / %d\n"%[actors[i].frags,actors[i].deaths]
- if remaining<=0 or scores.max()>=40: finish_match()
+  for a in actors: board.text+=(a.display_name if net.online else ("Вы" if a.human else "Бот"))+"                %d / %d\n"%[a.frags,a.deaths]
+ if not net.online and (remaining<=0 or score_limit_reached()): finish_match()
  if elapsed>12 and notice.text.begins_with("Магазин"): notice.text=""
 
 func _unhandled_input(e):
+ if e is InputEventKey and e.pressed and e.keycode==KEY_F8:
+  net.show_panel()
+  return
  if e is InputEventKey and e.pressed and e.keycode==KEY_F6:
   show_training()
   return
  if e is InputEventKey and e.pressed and e.keycode==KEY_ESCAPE and active:
-  get_tree().paused=true
+  if not net.online: get_tree().paused=true
   show_menu()
  if not active or get_tree().paused: return
  if e is InputEventKey and e.pressed:
@@ -341,7 +392,9 @@ func shop():
   var b=Button.new()
   b.text=WEAPONS[i].name+" — ₽1000"
   b.pressed.connect(func():
-   if money>=1000:
+   if net.online:
+    net.request_action("buy",i)
+   elif money>=1000:
     money-=1000
     player.equip(i)
     player.ammo=WEAPONS[i].mag
@@ -370,22 +423,17 @@ func died(victim, killer):
  if is_instance_valid(killer):
   killer.frags+=1
   scores[killer.team]+=1
-  if killer.human: money+=300
+  if net.online and killer.peer_id>0:
+   killer.cash+=300
+   if killer.human: money=killer.cash
+  elif killer.human: money+=300
 
 func effect(pos: Vector3, color: Color, size: float=0.15):
- var m=MeshInstance3D.new()
- var s=SphereMesh.new()
- s.radius=size
- s.height=size*2
- m.mesh=s
- m.material_override=material(color)
- world.add_child(m)
- m.global_position=pos
- var tween=create_tween()
- tween.tween_property(m,"scale",Vector3.ONE*0.05,0.18)
- tween.tween_callback(m.queue_free)
+ if dedicated: return
+ Visuals.impact(self,pos,color,size)
 
 func sound():
+ if dedicated: return
  var stream=AudioStreamWAV.new()
  stream.format=AudioStreamWAV.FORMAT_16_BITS
  stream.mix_rate=22050
@@ -423,9 +471,14 @@ func touch_controls():
  pause.text="ПАУЗА"
  pause.position=Vector2(1120,15)
  touch_layer.add_child(pause)
- pause.pressed.connect(func(): get_tree().paused=true; show_menu())
+ pause.pressed.connect(func():
+  if not net.online: get_tree().paused=true
+  show_menu())
 
 func show_training():
+ if net.online:
+  notice.text="Тренировочные функции доступны только офлайн"
+  return
  if is_instance_valid(training_panel): return
  var was_paused=get_tree().paused
  get_tree().paused=true
@@ -488,3 +541,18 @@ func create_theme() -> Theme:
    t.set_stylebox(state,type,box)
   t.set_color("font_color",type,Color("e7edf0"))
  return t
+
+func reset_training():
+ for key in training: training[key]=false
+ practice_used=false
+ if is_instance_valid(training_panel): training_panel.queue_free()
+ get_tree().paused=false
+
+func control_is_blocked() -> bool:
+ return (is_instance_valid(menu) and not menu.is_queued_for_deletion()) or (is_instance_valid(net.net_panel) and not net.net_panel.is_queued_for_deletion())
+
+func score_limit_reached() -> bool:
+ if match_mode==0: return scores.max()>=40
+ for actor in actors:
+  if actor.frags>=40: return true
+ return false

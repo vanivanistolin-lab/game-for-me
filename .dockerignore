@@ -1,0 +1,10 @@
+.git
+.godot
+build
+__pycache__
+*.log
+docs/screenshots
+.env
+.env.*
+*.keystore
+export_credentials.cfg

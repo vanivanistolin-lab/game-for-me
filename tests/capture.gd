@@ -30,6 +30,15 @@ func capture():
  await RenderingServer.frame_post_draw
  root.get_texture().get_image().save_png("res://docs/screenshots/training-menu.png")
  paused=false
+ if is_instance_valid(game.training_panel): game.training_panel.queue_free()
+ game.net.nickname="Владелец"
+ game.net.host(24686)
+ game.net.last_address=""
+ game.net.show_panel()
+ for frame in range(3): await process_frame
+ await RenderingServer.frame_post_draw
+ root.get_texture().get_image().save_png("res://docs/screenshots/network-admin.png")
+ game.net.leave("")
  game.queue_free()
  await process_frame
  quit()

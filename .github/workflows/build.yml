@@ -55,6 +55,18 @@ jobs:
           ! grep -E 'SCRIPT ERROR|Parse Error' /tmp/import.log
           godot --headless --fixed-fps 60 --script res://tests/smoke.gd 2>&1 | tee /tmp/smoke.log
           ! grep -E 'SCRIPT ERROR|ERROR:' /tmp/smoke.log
+      - name: Multiplayer integration with two real clients
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot --headless --script res://tests/collision_parity.gd
+          python3 tests/run_network.py
+      - name: Build and test free-hosting container
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -t gameforme-server:test .
+          GAME_TEST_IMAGE=gameforme-server:test python3 tests/run_network.py
       - name: Configure Android debug signing
         shell: bash
         run: |
@@ -76,14 +88,22 @@ jobs:
         run: |
           set -Eeuo pipefail
           trap 'echo "::error title=Package validation failed::Line $LINENO command: $BASH_COMMAND"' ERR
-          mkdir -p build/windows
+          mkdir -p build/windows build/server
           python3 scripts/ci_export.py Windows build/windows/GameForMe.exe --export-release
           python3 scripts/ci_export.py Android build/GameForMe-Android.apk --export-debug
+          python3 scripts/ci_export.py LinuxServer build/server/GameForMe-Server.x86_64 --export-release
+          chmod +x build/server/GameForMe-Server.x86_64
+          file build/server/GameForMe-Server.x86_64 | grep 'ELF 64-bit'
+          cp hosting/README.md build/server/README.md
+          cp hosting/Start-Server.sh build/server/Start-Server.sh
+          chmod +x build/server/Start-Server.sh
+          (cd build/server && zip -r ../GameForMe-Server-Linux.zip .)
           test "$(stat -c%s build/windows/GameForMe.exe)" -gt 1000000
           test "$(stat -c%s build/GameForMe-Android.apk)" -gt 1000000
           file build/windows/GameForMe.exe | grep 'PE32+'
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify build/GameForMe-Android.apk
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging build/GameForMe-Android.apk | grep org.gameforme.rubezh
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump permissions build/GameForMe-Android.apk | grep android.permission.INTERNET
           cp README.md build/windows/README.md
           (cd build/windows && zip -r ../GameForMe-Windows.zip .)
       - name: Build Windows installer
@@ -95,6 +115,16 @@ jobs:
           makensis -NOCD scripts/windows_installer.nsi
           test "$(stat -c%s build/GameForMe-Setup.exe)" -gt 1000000
           file build/GameForMe-Setup.exe | grep 'PE32'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameForMe-Server
+          path: build/GameForMe-Server-Linux.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameForMe-Multiplayer-Guide
+          path: hosting/README.md
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: GameForMe-Installer
@@ -143,3 +173,5 @@ jobs:
             packages/GameForMe-Setup.exe
             packages/Training-Guide.txt
             packages/GameForMe-Android.apk
+            packages/GameForMe-Server-Linux.zip
+            packages/README.md

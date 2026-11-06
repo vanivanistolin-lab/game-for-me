@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: game-for-me-server
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /healthz
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: GAME_SERVER
+        value: "1"
+      - key: GAME_ADMIN_TOKEN
+        generateValue: true

@@ -5,6 +5,7 @@ static func mesh(game, parent: Node3D, pos: Vector3, shape: Mesh, color: Color, 
  m.mesh=shape
  m.material_override=game.material(color,metal)
  parent.add_child(m)
+ if parent==game.world: m.add_to_group("visual_detail")
  m.position=pos
  return m
 
@@ -27,6 +28,7 @@ static func sign_text(game, pos: Vector3, text: String, color: Color, angle: flo
  l.outline_size=8
  l.outline_modulate=Color("172630")
  game.world.add_child(l)
+ l.add_to_group("visual_detail")
  l.position=pos
  l.rotation.y=angle
  return l
@@ -165,6 +167,7 @@ static func build(game):
   if game.graphics>0:
    for y in range(3,height,3):
     game.block(Vector3(x,y,43.9+(i%3)*5),Vector3(4,0.9,0.1),Color("54727c"),false)
+ enhance_environment(game)
  game.apply_quality()
 
 static func weapon(game, root: Node3D, index: int):
@@ -192,8 +195,12 @@ static func soldier(game, actor: Node3D, team: int):
  game.block(Vector3(0,1.03,-0.18),Vector3(0.43,0.45,0.12),Color("303e44"),false,actor)
  for x in [-0.15,0,0.15]: game.block(Vector3(x,0.91,-0.26),Vector3(0.11,0.18,0.1),uniform.darkened(0.2),false,actor)
  for x in [-0.16,0.16]:
-  game.block(Vector3(x,0.38,0),Vector3(0.19,0.65,0.22),uniform.darkened(0.15),false,actor)
-  game.block(Vector3(x,0.09,-0.06),Vector3(0.22,0.18,0.36),Color("30383a"),false,actor)
+  var hip=Node3D.new()
+  hip.name="LeftLeg" if x<0 else "RightLeg"
+  actor.add_child(hip)
+  hip.position=Vector3(x,.7,0)
+  game.block(Vector3(0,-.32,0),Vector3(.19,.65,.22),uniform.darkened(.15),false,hip)
+  game.block(Vector3(0,-.61,-.06),Vector3(.22,.18,.36),Color("30383a"),false,hip)
   var arm=game.block(Vector3(x*1.8,1.08,-0.1),Vector3(0.17,0.48,0.2),uniform,false,actor)
   arm.rotation.x=-0.75
  var head=SphereMesh.new()
@@ -206,3 +213,109 @@ static func soldier(game, actor: Node3D, team: int):
  mesh(game,actor,Vector3(0,1.72,0),helmet,uniform.darkened(0.15))
  game.block(Vector3(0,1.58,-0.19),Vector3(0.33,0.1,0.06),Color("1b3038"),false,actor)
  game.block(Vector3(0.2,1.18,-0.4),Vector3(0.12,0.13,0.6),Color("253039"),false,actor)
+
+static func tracer(game, origin: Vector3, end: Vector3):
+ if game.graphics==0 or origin.distance_to(end)<0.2: return
+ var line=MeshInstance3D.new()
+ var shape=CylinderMesh.new()
+ shape.top_radius=0.012
+ shape.bottom_radius=0.006
+ shape.height=origin.distance_to(end)
+ shape.radial_segments=4
+ line.mesh=shape
+ var m=StandardMaterial3D.new()
+ m.shading_mode=BaseMaterial3D.SHADING_MODE_UNSHADED
+ m.albedo_color=Color(1,0.8,0.42,0.5)
+ m.transparency=BaseMaterial3D.TRANSPARENCY_ALPHA
+ line.material_override=m
+ game.world.add_child(line)
+ line.global_position=(origin+end)*0.5
+ line.quaternion=Quaternion(Vector3.UP,(end-origin).normalized())
+ var tween=game.create_tween()
+ tween.tween_property(m,"albedo_color:a",0.0,0.06)
+ tween.tween_callback(line.queue_free)
+
+static func build_collision_map(game):
+ game.navigation=AStarGrid2D.new()
+ game.navigation.region=Rect2i(-29,-29,59,59)
+ game.navigation.cell_size=Vector2.ONE
+ game.navigation.diagonal_mode=AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+ game.navigation.update()
+ game.block(Vector3(0,-0.5,0),Vector3(60,1,60),Color.WHITE)
+ for x in [-30,30]: game.block(Vector3(x,2.5,0),Vector3(1,5,60),Color.WHITE)
+ for z in [-30,30]: game.block(Vector3(0,2.5,z),Vector3(60,5,1),Color.WHITE)
+ for x in [-19,0,19]:
+  for z in [-14,14]:
+   game.block(Vector3(x,3,z),Vector3(9,6,8),Color.WHITE)
+   game.block(Vector3(x,0.6,z),Vector3(9.1,1.2,8.1),Color.WHITE)
+   game.block(Vector3(x,6.15,z),Vector3(9.5,0.3,8.5),Color.WHITE)
+   for side in [-1,1]: game.block(Vector3(x,0.1,z+side*4.73),Vector3(10,0.2,1.2),Color.WHITE)
+ for x in [-23,-10,10,23]:
+  for z in [-5,5]: game.block(Vector3(x,0.9,z),Vector3(3,1.8,3),Color.WHITE)
+ for i in range(8): game.block(Vector3(-5+i*1.2,0.15*i,22),Vector3(1.2,0.3*(i+1),4),Color.WHITE)
+ if game.map_id==2:
+  for x in [-27,27]: game.block(Vector3(x,4,21),Vector3(4,8,4),Color.WHITE)
+
+static func enhance_environment(game):
+ # Details remain outside the collision model so clients and server share geometry.
+ for x in [-19,0,19]:
+  for z in [-14,14]:
+   for side in [-1,1]:
+    var front=z+side*4.3
+    # Entry doors, small projecting balconies and AC vents break up repeated facades.
+    game.block(Vector3(x,1.15,front),Vector3(1.25,2.25,0.12),Color("3d5358"),false)
+    game.block(Vector3(x+0.4,1.1,front+side*0.09),Vector3(0.07,0.12,0.08),Color("b8af8d"),false)
+    for y in [0.25,2.3]: game.block(Vector3(x,y,front),Vector3(1.5,0.08,0.25),Color("a4a392"),false)
+    game.block(Vector3(x-2.7,1.5,front+side*0.4),Vector3(2.25,0.12,1.2),Color("819091"),false)
+    for w in range(7):
+     cylinder(game,game.world,Vector3(x-3.7+w*.33,2,front+side*.93),0.024,1.0,Color("43575f"))
+    game.block(Vector3(x-2.7,2.5,front+side*.93),Vector3(2.3,.06,.06),Color("52646a"),false)
+    game.block(Vector3(x+3.4,3.1,front+side*.25),Vector3(1,.6,.55),Color("9caaa8"),false)
+    for v in range(5): game.block(Vector3(x+3.4,2.9+v*.09,front+side*.55),Vector3(.8,.025,.03),Color("536a70"),false)
+    # A translucent glint gives windows varied reflections without costly SSR.
+    for w in [-2.7,2.7]:
+     for y in [2.4,4.7]:
+      var glint=game.block(Vector3(x+w-.3,y+.2,front+side*.04),Vector3(.14,1.0,.015),Color("60828e"),false)
+      glint.rotation.z=-.3
+ for x in [-28,28]:
+  for z in [-9,9]:
+   for i in range(4):
+    var leaf=SphereMesh.new()
+    leaf.radius=.45+i*.04
+    leaf.height=.7
+    var plant=mesh(game,game.world,Vector3(x+(i%2)*.2,0.45+i*.22,z),leaf,Color("3e684a"))
+    plant.add_to_group("visual_detail")
+ # Sagging overhead utility cables create silhouettes above the alleys.
+ for x in [-11,11]:
+  for i in range(12):
+   var z=-25+i*4.2
+   var a=Vector3(x,6.6-sin(float(i)/12*PI)*1.2,z)
+   var b=Vector3(x,6.6-sin(float(i+1)/12*PI)*1.2,z+4.2)
+   var wire=cylinder(game,game.world,(a+b)*.5,.018,a.distance_to(b),Color("26363e"))
+   wire.quaternion=Quaternion(Vector3.UP,(b-a).normalized())
+   wire.add_to_group("visual_detail")
+ # Road markings and drains ground the scene at human scale.
+ for z in range(-24,28,6):
+  game.block(Vector3(9,.015,z),Vector3(.1,.015,2),Color("c5c1a5"),false)
+ for x in [-7,7]:
+  for z in [-22,22]:
+   game.block(Vector3(x,.025,z),Vector3(.8,.02,1),Color("3b474c"),false)
+   for v in range(5): game.block(Vector3(x-.3+v*.15,.04,z),Vector3(.04,.02,.85),Color("7c8580"),false)
+
+static func impact(game, pos: Vector3, color: Color, size: float):
+ var m=MeshInstance3D.new()
+ var sphere=SphereMesh.new()
+ sphere.radius=size
+ sphere.height=size*2
+ m.mesh=sphere
+ var material=StandardMaterial3D.new()
+ material.shading_mode=BaseMaterial3D.SHADING_MODE_UNSHADED
+ material.transparency=BaseMaterial3D.TRANSPARENCY_ALPHA
+ material.albedo_color=color
+ m.material_override=material
+ game.world.add_child(m)
+ m.global_position=pos
+ var t=game.create_tween().set_parallel(true)
+ t.tween_property(m,"scale",Vector3.ONE*2.3,.12)
+ t.tween_property(material,"albedo_color:a",0.0,.16)
+ t.chain().tween_callback(m.queue_free)

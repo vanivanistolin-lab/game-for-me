@@ -62,7 +62,7 @@ jobs:
           mkdir -p "$HOME/.android" "$HOME/.config/godot"
           test ! -e "$HOME/.android/debug.keystore" || rm "$HOME/.android/debug.keystore"
           keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000
-          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          cat > "$HOME/.config/godot/editor_settings-4.6.tres" <<EOF
           [gd_resource type="EditorSettings" format=3]
           [resource]
           export/android/android_sdk_path = "$ANDROID_HOME"
@@ -74,7 +74,8 @@ jobs:
       - name: Export and validate packages
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          trap 'echo "::error title=Package validation failed::Line $LINENO command: $BASH_COMMAND"' ERR
           mkdir -p build/windows
           python3 scripts/ci_export.py Windows build/windows/GameForMe.exe --export-release
           python3 scripts/ci_export.py Android build/GameForMe-Android.apk --export-debug

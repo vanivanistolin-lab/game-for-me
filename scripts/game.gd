@@ -353,6 +353,7 @@ func _process(delta):
  hud.text="ЗДОРОВЬЕ %03d   БРОНЯ %02d   ₽%d\n%s    %02d / %03d\nR перезарядка · B магазин · G граната · F6 тренировка"%[maxi(0,int(player.hp)),int(player.armor),money,WEAPONS[player.weapon].name,player.ammo,player.reserve]
  if net.online: hud.text=hud.text.replace("F6 тренировка","F8 сервер")
  if net.online: status_top.text+="\nСЕТЬ · "+("АДМИНИСТРАТОР" if net.is_admin() else "ИГРОК")
+ if net.online and net.admin_powers.values().has(true): status_top.text+=" · АДМИН-РЕЖИМ"
  if practice_used: status_top.text+="\nОФЛАЙН-ТРЕНИРОВКА"
 
  board.visible=Input.is_action_pressed("score")

@@ -60,6 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           godot --headless --script res://tests/collision_parity.gd
+          godot --headless --script res://tests/admin_powers.gd
           python3 tests/run_network.py
       - name: Build and test free-hosting container
         shell: bash

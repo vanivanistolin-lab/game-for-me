@@ -1,12 +1,13 @@
 extends Node
 
-const PROTOCOL=3
+const PROTOCOL=4
 const MAX_PLAYERS=8
 var game
 var online=false
 var is_host=false
 var dedicated=false
 var admin_id=0
+var admin_powers={"invincible":false,"infinite_ammo":false,"no_recoil":false}
 var admin_secret=""
 var pending_secret=""
 var nickname="Игрок"
@@ -108,6 +109,7 @@ func leave(message: String="Отключено"):
  online=false
  is_host=false
  admin_id=0
+ reset_admin_powers()
  players.clear()
  entities.clear()
  last_sequences.clear()
@@ -197,10 +199,10 @@ func send_snapshot():
  for id in entities:
   var a=entities[id]
   state.append({"id":id,"team":a.team,"nick":a.display_name,"pos":a.position,"yaw":a.rotation.y,"pitch":a.pitch,"hp":a.hp,"armor":a.armor,"weapon":a.weapon,"ammo":a.ammo,"reserve":a.reserve,"frags":a.frags,"deaths":a.deaths,"cash":a.cash,"reload":a.reload_time,"dead":a.dead_time,"grenades":a.grenades})
- snapshot.rpc(epoch,game.remaining,game.elapsed,game.scores,admin_id,game.active,state)
+ snapshot.rpc(epoch,game.remaining,game.elapsed,game.scores,admin_id,admin_powers,game.active,state)
 
 @rpc("authority","call_remote","reliable")
-func snapshot(round_id: int, time_left: float, elapsed: float, score: Array, owner: int, running: bool, state: Array):
+func snapshot(round_id: int, time_left: float, elapsed: float, score: Array, owner: int, powers: Dictionary, running: bool, state: Array):
  if is_host or not online or round_id!=epoch: return
  last_snapshot_msec=Time.get_ticks_msec()
  diagnostics.snapshots+=1
@@ -209,6 +211,7 @@ func snapshot(round_id: int, time_left: float, elapsed: float, score: Array, own
  game.scores=score
  game.active=running
  admin_id=owner
+ admin_powers=powers.duplicate()
  var present={}
  players.clear()
  for entry in state:
@@ -263,7 +266,9 @@ func _peer_left(id: int):
  input_windows.erase(id)
  command_windows.erase(id)
  auth_windows.erase(id)
- if admin_id==id: admin_id=0
+ if admin_id==id:
+  admin_id=0
+  reset_admin_powers()
  send_snapshot()
 
 func sanitized_input(raw: Dictionary) -> Dictionary:
@@ -340,6 +345,13 @@ func execute_admin(id: int, action: String, value: int):
   if id!=1: message.rpc_id(id,"Нет прав администратора")
   return
  match action:
+  "power_invincible", "power_infinite_ammo", "power_no_recoil":
+   admin_powers[action.trim_prefix("power_")]=value==1
+  "heal":
+   if entities.has(id):
+    if entities[id].hp<=0: entities[id].respawn()
+    entities[id].hp=100
+    entities[id].armor=100
   "map":
    if value<0 or value>2: return
    game.map_id=value
@@ -367,6 +379,7 @@ func claim_admin(key: String):
   message.rpc_id(id,"Пароль администратора неверен или не задан на сервере")
   return
  if Crypto.new().constant_time_compare(key.to_utf8_buffer(),admin_secret.to_utf8_buffer()):
+  if admin_id!=id: reset_admin_powers()
   admin_id=id
   message.rpc_id(id,"Вы вошли как администратор. F8 — панель сервера.")
   send_snapshot()
@@ -387,7 +400,7 @@ func shot_fx(id: int, origin: Vector3, end: Vector3):
  if not entities.has(id): return
  var a=entities[id]
  if a.human:
-  a.recoil+=0.012
+  if not a.has_power("no_recoil"): a.recoil+=0.012
   a.cooldown=game.WEAPONS[a.weapon].rate
   game.sound()
  if not game.dedicated:
@@ -469,6 +482,16 @@ func show_panel():
    net_panel.queue_free())
   box.add_child(create)
  if is_admin():
+  for power in ["invincible","infinite_ammo","no_recoil"]:
+   var check=CheckButton.new()
+   check.text={"invincible":"Админ: бессмертие","infinite_ammo":"Админ: бесконечные патроны / гранаты","no_recoil":"Админ: без отдачи и разброса"}[power]
+   check.button_pressed=admin_powers[power]
+   check.toggled.connect(func(enabled): admin_action("power_"+power,1 if enabled else 0))
+   box.add_child(check)
+  var heal=Button.new()
+  heal.text="Восстановить здоровье и броню"
+  heal.pressed.connect(func(): admin_action("heal"))
+  box.add_child(heal)
   for map in range(3):
    var button=Button.new()
    button.text="Карта: "+["Портовый квартал","Цех 17","Песчаный форт"][map]
@@ -514,3 +537,6 @@ func show_panel():
 @rpc("authority","call_remote","reliable")
 func explosion(pos: Vector3):
  game.effect(pos,Color("ff742e"),2)
+
+func reset_admin_powers():
+ for key in admin_powers: admin_powers[key]=false

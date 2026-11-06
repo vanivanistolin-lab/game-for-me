@@ -240,10 +240,10 @@ func reload_weapon():
 
 func shoot():
  if game.net.online and not game.net.is_host: return
- if human and game.training.infinite_ammo and ammo<=0: ammo=game.WEAPONS[weapon].mag
- if human and game.training.no_recoil: recoil=0
+ if has_power("infinite_ammo") and ammo<=0: ammo=game.WEAPONS[weapon].mag
+ if has_power("no_recoil"): recoil=0
  if cooldown>0 or reload_time>0 or ammo<=0: return
- if not (human and game.training.infinite_ammo): ammo-=1
+ if not (has_power("infinite_ammo")): ammo-=1
  var w=game.WEAPONS[weapon]
  cooldown=w.rate*(1 if human else 2.5-game.difficulty*0.6)
  var origin=global_position+Vector3.UP*1.45
@@ -251,7 +251,7 @@ func shoot():
  if human:
   origin=camera.global_position
   forward=-camera.global_transform.basis.z
-  if not game.training.no_recoil: recoil+=0.012
+  if not has_power("no_recoil"): recoil+=0.012
   game.sound()
  elif peer_id>0:
   origin=global_position+Vector3.UP*(1.05 if network_input.get("crouch",false) else 1.6)
@@ -262,7 +262,7 @@ func shoot():
  var pellets=7 if weapon==4 else 1
  for i in range(pellets):
   var spread=w.spread*(0.3 if aim else 1.0)*(1.0 if human else 4.0-game.difficulty)
-  if human and game.training.no_recoil: spread=0.0
+  if has_power("no_recoil"): spread=0.0
   var ray=(forward+Vector3(game.rng.randf_range(-spread,spread),game.rng.randf_range(-spread,spread),game.rng.randf_range(-spread,spread))).normalized()
   var q=PhysicsRayQueryParameters3D.create(origin,origin+ray*90,3,[get_rid()])
   var hit=get_world_3d().direct_space_state.intersect_ray(q)
@@ -279,7 +279,7 @@ func shoot():
 
 func damage(amount: float, attacker):
  if game.net.online and not game.net.is_host: return
- if human and game.training.invincible: return
+ if has_power("invincible"): return
  if hp<=0: return
  var absorbed=minf(armor,amount*0.45)
  armor-=absorbed
@@ -307,9 +307,9 @@ func grenade():
  if game.net.online and not game.net.is_host:
   game.net.request_action("grenade")
   return
- if human and game.training.infinite_ammo and grenades<=0: grenades=1
+ if has_power("infinite_ammo") and grenades<=0: grenades=1
  if grenades<=0 or hp<=0: return
- if not (human and game.training.infinite_ammo): grenades-=1
+ if not (has_power("infinite_ammo")): grenades-=1
  var position_target=global_position-global_transform.basis.z*8
  position_target.y=1
  var q=PhysicsRayQueryParameters3D.create(global_position+Vector3.UP,position_target,1)
@@ -364,3 +364,8 @@ func _process(dt):
  if left!=null:
   left.rotation.x=lerpf(left.rotation.x,sin(walk_phase)*amplitude,minf(1,dt*12))
   right.rotation.x=lerpf(right.rotation.x,-sin(walk_phase)*amplitude,minf(1,dt*12))
+
+func has_power(power: String) -> bool:
+ if game.net.online:
+  return peer_id>0 and peer_id==game.net.admin_id and game.net.admin_powers.get(power,false)
+ return human and game.training.get(power,false)

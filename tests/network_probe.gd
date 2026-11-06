@@ -46,7 +46,9 @@ func guest():
  check(not game.net.is_admin(),"Guest has no administrative privileges")
  game.net.claim_admin.rpc_id(1,"wrong-password-at-least-sixteen")
  game.net.admin_action("map",1)
+ game.net.admin_action("power_invincible",1)
  await create_timer(0.4).timeout
+ check(not game.net.admin_powers.invincible,"Guest cannot enable admin cheats")
  check(game.map_id==0 and not game.net.is_admin(),"Wrong key and unauthorized map change rejected")
  game.show_training()
  check(not is_instance_valid(game.training_panel),"Offline training is blocked in multiplayer")
@@ -70,6 +72,19 @@ func admin():
  check(await wait_for(func(): return game.net.is_admin()),"Correct secret grants admin rights")
  check(await wait_for(func(): return game.net.players.size()==2),"Two real clients share a match")
  check(await wait_for(func(): return FileAccess.file_exists(output_dir+"/guest-ready")),"Guest tests completed")
+ game.net.admin_action("power_invincible",1)
+ game.net.admin_action("power_infinite_ammo",1)
+ game.net.admin_action("power_no_recoil",1)
+ check(await wait_for(func(): return game.player.has_power("invincible") and game.player.has_power("infinite_ammo") and game.player.has_power("no_recoil")),"Server grants powers only to authenticated admin")
+ var ammo=game.player.ammo
+ for i in range(5):
+  game.net.transmit_input({"move":Vector2.ZERO,"yaw":0.0,"pitch":0.0,"fire":true})
+  await create_timer(.05).timeout
+ check(game.player.ammo==ammo,"Admin firing preserves ammo on real server")
+ game.net.admin_action("heal")
+ check(await wait_for(func(): return game.player.hp==100 and game.player.armor==100),"Admin heal executes on server")
+ game.net.admin_action("power_infinite_ammo",0)
+ check(await wait_for(func(): return not game.player.has_power("infinite_ammo")),"Administrator can disable powers")
  game.net.admin_action("map",2)
  check(await wait_for(func(): return game.map_id==2),"Administrator changes map")
  check(game.net.is_admin(),"Administrator remains owner after map change")
